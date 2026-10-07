@@ -1,0 +1,18 @@
+name: oracle
+# Thin caller. Triggers live here; the job lives in antfarm-core, pinned by SHA.
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number (labelled done or blocked)
+        required: true
+permissions: {}
+jobs:
+  oracle:
+    uses: project-antfarm/antfarm-core/.github/workflows/oracle.yml@CORE_SHA
+    with:
+      core_ref: CORE_SHA
+      issue: ${{ github.event.inputs.issue || '' }}
+    secrets: inherit

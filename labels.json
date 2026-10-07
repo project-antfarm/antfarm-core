@@ -1,0 +1,62 @@
+[
+  {
+    "color": "0E8A16",
+    "description": "executable by a Worker",
+    "name": "ready"
+  },
+  {
+    "color": "FBCA04",
+    "description": "claimed by a Worker",
+    "name": "in-progress"
+  },
+  {
+    "color": "0052CC",
+    "description": "Queen approved, merge pending",
+    "name": "approved"
+  },
+  {
+    "color": "D93F0B",
+    "description": "review found problems",
+    "name": "needs-fix"
+  },
+  {
+    "color": "B60205",
+    "description": "attempts exhausted, Queen must decompose",
+    "name": "blocked"
+  },
+  {
+    "color": "C5DEF5",
+    "description": "first fix attempt",
+    "name": "attempt:1"
+  },
+  {
+    "color": "5319E7",
+    "description": "boundary change requested from the human",
+    "name": "human"
+  },
+  {
+    "color": "C5DEF5",
+    "description": "second fix attempt",
+    "name": "attempt:2"
+  },
+  {
+    "color": "EDEDED",
+    "description": "human-readable status, rewritten in place",
+    "name": "colony-status"
+  },
+  {
+    "color": "6F42C1",
+    "description": "Queen declared GOAL.md satisfied",
+    "name": "done"
+  },
+  {
+    "color": "1D76DB",
+    "description": "suggestion from the human owner; the Queen decides",
+    "name": "request"
+  },
+  {
+    "name": "done-rejected",
+    "color": "6F42C1",
+    "description": "the Oracle rejected a DONE claim; the Queen continues"
+  }
+]

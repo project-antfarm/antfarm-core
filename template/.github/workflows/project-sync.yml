@@ -1,0 +1,14 @@
+name: project-sync
+# Thin caller. Triggers live here; the job lives in antfarm-core, pinned by SHA.
+on:
+  issues:
+    types: [labeled, unlabeled, closed, reopened]
+  pull_request:
+    types: [opened, reopened]
+permissions: {}
+jobs:
+  sync:
+    uses: project-antfarm/antfarm-core/.github/workflows/project-sync.yml@CORE_SHA
+    with:
+      project_number: "1"
+    secrets: inherit

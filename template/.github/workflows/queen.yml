@@ -1,0 +1,24 @@
+name: queen
+# Thin caller. Triggers live here; the job lives in antfarm-core, pinned by SHA.
+# The same SHA goes in `uses:` and in `core_ref` (GitHub does not expose the
+# called workflow's own commit, and the manifest must record it).
+on:
+  # Primary trigger: a colony PR finished CI, so there is something to review.
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  # A blocked Issue or a rejected DONE claim needs a decision now.
+  issues:
+    types: [labeled]
+  # Heartbeat every 3 hours, off the top of the hour where GitHub delays cron
+  # the most. It recovers the colony after a guard block or a missed event.
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  queen:
+    uses: project-antfarm/antfarm-core/.github/workflows/queen.yml@CORE_SHA
+    with:
+      core_ref: CORE_SHA
+    secrets: inherit

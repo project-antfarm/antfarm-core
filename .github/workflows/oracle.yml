@@ -1,0 +1,196 @@
+name: oracle
+# Reusable. The Oracle is the colony's stronger, rarer model. It never plans and
+# never builds: it audits a DONE claim (label `done`) or advises on an Issue the
+# colony could not finish (label `blocked`). The verdict is applied by a
+# deterministic step from the agent's structured output, never by the agent.
+# The specimen's caller owns the triggers (issues labelled, workflow_dispatch
+# with an issue number) and pins this file by SHA.
+on:
+  workflow_call:
+    inputs:
+      core_ref:
+        description: The antfarm-core commit this caller pinned in `uses:`. Recorded in the run manifest.
+        type: string
+        required: true
+      issue:
+        description: Issue number (workflow_dispatch only; the issues event carries its own)
+        type: string
+        required: false
+        default: ""
+permissions: {}
+env:
+  ROLE: oracle
+  APP: antfarm-oracle
+  STATUS_ISSUE: "1"
+  GH_REPO: ${{ github.repository }}
+  SPECIMEN: ${{ github.event.repository.name }}
+  CORE_REPO: project-antfarm/antfarm-core
+jobs:
+  oracle:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'done' || github.event.label.name == 'blocked'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: oracle
+      cancel-in-progress: false
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: fetch antfarm-core at the pinned ref
+        env:
+          CORE_REF: ${{ inputs.core_ref }}
+        run: |
+          git init -q "$RUNNER_TEMP/core"
+          git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "https://github.com/$CORE_REPO.git" "$CORE_REF"
+          git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
+          { echo "CORE=$RUNNER_TEMP/core/antfarm"
+            echo "CORE_SHA=$(git -C "$RUNNER_TEMP/core" rev-parse HEAD)"
+            echo "ANTFARM_CONFIG=$GITHUB_WORKSPACE/.antfarm/config.yml"; } >> "$GITHUB_ENV"
+      - name: read config
+        id: cfg
+        run: |
+          for k in run telemetry_repo oracle.model oracle.max_turns oracle.effort oracle.runs_per_day; do
+            echo "${k//./_}=$(yq ".$k" "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
+          done
+          echo "started_at=$(date -u +%FT%TZ)" >> "$GITHUB_OUTPUT"
+          { echo "role_prompt<<ANTFARM_EOF"; cat "$CORE/oracle.md"; echo "ANTFARM_EOF"; } >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app
+        with:
+          app-id: ${{ secrets.ORACLE_APP_ID }}
+          private-key: ${{ secrets.ORACLE_APP_PRIVATE_KEY }}
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: tel
+        with:
+          app-id: ${{ secrets.TELEMETRY_APP_ID }}
+          private-key: ${{ secrets.TELEMETRY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: antfarm-telemetry
+      - name: guards
+        id: guard
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ENABLED: ${{ vars.ANTFARM_ENABLED }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          TELEMETRY_REPO: ${{ steps.cfg.outputs.telemetry_repo }}
+        run: |
+          # block <reason> [log]: skip the model; "log" also records a guard.blocked event
+          block() { echo "blocked: $1"; { echo "skip=true"; echo "reason=$1"; echo "log=${2:-}"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
+          [ "$ENABLED" = "true" ] || block kill_switch
+          labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name]|join(" ")')
+          case " $labels " in
+            *" done "*)    mode=audit;;
+            *" blocked "*) mode=advise;;
+            *) block not_applicable;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          bash "$CORE/budget.sh" oracle || { rc=$?; [ "$rc" = 3 ] || exit "$rc"; block "$(grep -oP 'block_reason=\K.*' "$GITHUB_OUTPUT" | tail -1)" log; }
+          if [ "$mode" = audit ]; then
+            echo 'schema={"type":"object","properties":{"verdict":{"type":"string","enum":["approved","rejected"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"item":{"type":"string"},"status":{"type":"string","enum":["met","unmet","unverifiable"]},"evidence":{"type":"string"}},"required":["item","status","evidence"]}}},"required":["verdict","summary","findings"]}' >> "$GITHUB_OUTPUT"
+          else
+            echo 'schema={"type":"object","properties":{"recommendation":{"type":"string","enum":["decompose","drop","retry","change-approach"]},"summary":{"type":"string"},"proposal":{"type":"string"}},"required":["recommendation","summary","proposal"]}' >> "$GITHUB_OUTPUT"
+          fi
+      - name: record guard block
+        if: steps.guard.outputs.log == 'log'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TELEMETRY_TOKEN: ${{ steps.tel.outputs.token }}
+          TELEMETRY_REPO: ${{ steps.cfg.outputs.telemetry_repo }}
+          RUN: ${{ steps.cfg.outputs.run }}
+          MODEL: ${{ steps.cfg.outputs.oracle_model }}
+          REASON: ${{ steps.guard.outputs.reason }}
+          ISSUE: ${{ steps.guard.outputs.issue }}
+        run: bash "$CORE/telemetry.sh" blocked "$(jq -cn --arg r "$REASON" --arg i "$ISSUE" '{reason:$r, target:{issue:($i|tonumber)}}')"
+      - uses: anthropics/claude-code-action@58985842b834ed26087302ba27d07bc24ca8697a # v1 on 2026-10-06, installs Claude Code 2.1.292
+        if: steps.guard.outputs.skip != 'true'
+        id: claude
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          # `done` is applied by the Queen's App, `blocked` by the Worker's
+          allowed_bots: "antfarm-queen[bot],antfarm-queen,antfarm-worker[bot],antfarm-worker"
+          bot_name: "antfarm-oracle[bot]"
+          prompt: |
+            ${{ steps.cfg.outputs.role_prompt }}
+
+            ## This execution
+
+            Repository: ${{ github.repository }}.
+            Deployed site: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+            Mode: ${{ steps.guard.outputs.mode }}. Issue: #${{ steps.guard.outputs.issue }}.
+          claude_args: |
+            --model ${{ steps.cfg.outputs.oracle_model }}
+            --effort ${{ steps.cfg.outputs.oracle_effort }}
+            --max-turns ${{ steps.cfg.outputs.oracle_max_turns }}
+            --allowedTools "Bash,Read,Glob,Grep,WebFetch"
+            --disallowedTools "Bash(sudo:*),Bash(ssh:*),Bash(scp:*),Bash(git push:*),Bash(gh issue edit:*),Bash(gh issue close:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh pr merge:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh pr close:*)"
+            --json-schema '${{ steps.guard.outputs.schema }}'
+      - name: keep raw trace
+        if: always() && steps.claude.outputs.execution_file != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trace-oracle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.claude.outputs.execution_file }}
+          retention-days: 90
+      - name: apply the verdict
+        if: always() && steps.guard.outcome == 'success' && steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUE: ${{ steps.guard.outputs.issue }}
+          MODE: ${{ steps.guard.outputs.mode }}
+          REPORT: ${{ steps.claude.outputs.structured_output || '{}' }}
+          CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          reason="the agent did not run (infrastructure failure)"
+          if [ -n "$EXEC_FILE" ] && [ -f "$EXEC_FILE" ]; then
+            reason=$(jq -r '([.[]? | select(.type=="result")] | last) | .terminal_reason // .subtype // "unknown"' "$EXEC_FILE")
+          fi
+          body=/tmp/oracle-body.md
+          if [ "$MODE" = audit ]; then
+            verdict=$(jq -r '.verdict // empty' <<<"$REPORT")
+            if [ "$CONCLUSION" = success ] && [ -n "$verdict" ]; then
+              jq -r --arg url "$RUN_URL" '
+                def cell: gsub("\n"; " ") | gsub("\\|"; "\\|");
+                "## Oracle verdict: **\(.verdict)**\n\n\(.summary)\n\n| Item | Status | Evidence |\n|---|---|---|\n" +
+                ([.findings[] | "| \(.item | cell) | \(.status) | \(.evidence | cell) |"] | join("\n")) +
+                "\n\nApplied by the infrastructure from the Oracle'"'"'s structured output. Run: \($url)"' <<<"$REPORT" > "$body"
+              gh issue comment "$ISSUE" --body-file "$body"
+              if [ "$verdict" = rejected ]; then
+                # Fail the claim, not the colony: the Queen is woken by `done-rejected`
+                # and continues with the unmet items in front of her.
+                gh issue edit "$ISSUE" --remove-label done --add-label done-rejected
+                gh issue close "$ISSUE" --reason "not planned"
+              fi
+            else
+              # Fail closed: `done` stays, the Queen stays paused, a human judges.
+              printf 'The Oracle did not reach a verdict (%s). The `done` label stays and the colony stays paused until a human judges this claim or re-runs the Oracle. Run: %s\n' "$reason" "$RUN_URL" > "$body"
+              gh issue comment "$ISSUE" --body-file "$body"
+              gh issue edit "$ISSUE" --add-label human
+            fi
+          else
+            if [ "$CONCLUSION" = success ] && [ "$(jq -r '.recommendation // empty' <<<"$REPORT")" != "" ]; then
+              jq -r --arg url "$RUN_URL" '"## Oracle recommendation: **\(.recommendation)**\n\n\(.summary)\n\n\(.proposal)\n\nAdvice, not an order: the Queen decides. Run: \($url)"' <<<"$REPORT" > "$body"
+            else
+              printf 'The Oracle failed (%s). The Queen decides without its advice. Run: %s\n' "$reason" "$RUN_URL" > "$body"
+            fi
+            gh issue comment "$ISSUE" --body-file "$body"
+          fi
+      - name: record execution
+        if: always() && steps.guard.outcome == 'success' && steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TELEMETRY_TOKEN: ${{ steps.tel.outputs.token }}
+          TELEMETRY_REPO: ${{ steps.cfg.outputs.telemetry_repo }}
+          RUN: ${{ steps.cfg.outputs.run }}
+          MODEL: ${{ steps.cfg.outputs.oracle_model }}
+          STARTED_AT: ${{ steps.cfg.outputs.started_at }}
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file }}
+          REPORT: ${{ steps.claude.outputs.structured_output || '{}' }}
+          CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+          ISSUE: ${{ steps.guard.outputs.issue }}
+          MODE: ${{ steps.guard.outputs.mode }}
+        run: |
+          kind=failed; [ "$CONCLUSION" = success ] && kind=completed
+          bash "$CORE/telemetry.sh" "$kind" "$(jq -cn --argjson r "$REPORT" --arg i "$ISSUE" --arg m "$MODE" '{target:{issue:($i|tonumber), mode:$m}, agent_report:$r}')"

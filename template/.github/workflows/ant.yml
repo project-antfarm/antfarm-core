@@ -1,0 +1,18 @@
+name: ant
+# Thin caller. Triggers live here; the job lives in antfarm-core, pinned by SHA.
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+permissions: {}
+jobs:
+  ant:
+    uses: project-antfarm/antfarm-core/.github/workflows/ant.yml@CORE_SHA
+    with:
+      core_ref: CORE_SHA
+      issue: ${{ github.event.inputs.issue || '' }}
+    secrets: inherit
