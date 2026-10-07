@@ -21,7 +21,7 @@ jobs:
     if: >-
       github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'ant/'))
-      || (github.event_name == 'issues' && (github.event.label.name == 'blocked' || github.event.label.name == 'done-rejected'))
+      || (github.event_name == 'issues' && (github.event.label.name == 'oracle-advised' || github.event.label.name == 'done-rejected'))
     runs-on: ubuntu-latest
     # Job level on purpose: see ant.yml.
     concurrency:
@@ -43,9 +43,10 @@ jobs:
       - name: read config
         id: cfg
         run: |
-          for k in run telemetry_repo queen.model queen.max_turns queen.effort queen.runs_per_day queen.review_wait_max_seconds budget.weekly_cost_usd ready_max attempts_max lease_hours; do
+          for k in run telemetry_repo queen.model queen.max_turns queen.runs_per_day queen.review_wait_max_seconds budget.weekly_cost_usd ready_max attempts_max lease_hours; do
             echo "${k//./_}=$(yq ".$k" "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
           done
+          echo "queen_effort=$(yq '.queen.effort // "high"' "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
           echo "started_at=$(date -u +%FT%TZ)" >> "$GITHUB_OUTPUT"
           { echo "role_prompt<<ANTFARM_EOF"; cat "$CORE/queen.md"; echo "ANTFARM_EOF"; } >> "$GITHUB_OUTPUT"
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2

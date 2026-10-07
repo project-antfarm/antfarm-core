@@ -39,7 +39,10 @@ The Oracle's verdict is applied by a workflow step from its structured output:
 a rejected DONE claim is closed with the findings and labelled `done-rejected`,
 which wakes the Queen. If the Oracle fails to reach a verdict, `done` stays,
 the colony stays paused, and the Issue is labelled `human`. Advice on a
-blocked Issue is a comment; the Queen decides.
+blocked Issue is a comment, followed by the label `oracle-advised`, which is
+what wakes the Queen: she no longer listens to `blocked` itself, so she
+always reads the advice (or its absence) before deciding. If the Oracle is
+guard-blocked, the next heartbeat picks the Issue up.
 
 ## How a specimen uses this
 

@@ -47,9 +47,10 @@ jobs:
       - name: read config
         id: cfg
         run: |
-          for k in run telemetry_repo worker.model worker.max_turns worker.effort attempts_max ready_max; do
+          for k in run telemetry_repo worker.model worker.max_turns attempts_max ready_max; do
             echo "${k//./_}=$(yq ".$k" "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
           done
+          echo "worker_effort=$(yq '.worker.effort // "high"' "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
           echo "started_at=$(date -u +%FT%TZ)" >> "$GITHUB_OUTPUT"
           tk="$(dirname "$ANTFARM_CONFIG")/toolkit.yml"
           echo "rtk_version=$(yq '.tools[] | select(.name=="rtk") | .version' "$tk")" >> "$GITHUB_OUTPUT"

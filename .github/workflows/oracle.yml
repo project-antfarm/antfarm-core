@@ -48,9 +48,10 @@ jobs:
       - name: read config
         id: cfg
         run: |
-          for k in run telemetry_repo oracle.model oracle.max_turns oracle.effort oracle.runs_per_day; do
+          for k in run telemetry_repo oracle.model oracle.max_turns oracle.runs_per_day; do
             echo "${k//./_}=$(yq ".$k" "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
           done
+          echo "oracle_effort=$(yq '.oracle.effort // "high"' "$ANTFARM_CONFIG")" >> "$GITHUB_OUTPUT"
           echo "started_at=$(date -u +%FT%TZ)" >> "$GITHUB_OUTPUT"
           { echo "role_prompt<<ANTFARM_EOF"; cat "$CORE/oracle.md"; echo "ANTFARM_EOF"; } >> "$GITHUB_OUTPUT"
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
@@ -58,6 +59,18 @@ jobs:
         with:
           app-id: ${{ secrets.ORACLE_APP_ID }}
           private-key: ${{ secrets.ORACLE_APP_PRIVATE_KEY }}
+      # The agent reads with this token; only the deterministic steps hold the
+      # one that writes. A denylist of gh subcommands is not a boundary.
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app_ro
+        with:
+          app-id: ${{ secrets.ORACLE_APP_ID }}
+          private-key: ${{ secrets.ORACLE_APP_PRIVATE_KEY }}
+          permission-metadata: read
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+          permission-actions: read
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         id: tel
         with:
@@ -106,7 +119,7 @@ jobs:
         id: claude
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ steps.app.outputs.token }}
+          github_token: ${{ steps.app_ro.outputs.token }}
           # `done` is applied by the Queen's App, `blocked` by the Worker's
           allowed_bots: "antfarm-queen[bot],antfarm-queen,antfarm-worker[bot],antfarm-worker"
           bot_name: "antfarm-oracle[bot]"
@@ -176,6 +189,9 @@ jobs:
               printf 'The Oracle failed (%s). The Queen decides without its advice. Run: %s\n' "$reason" "$RUN_URL" > "$body"
             fi
             gh issue comment "$ISSUE" --body-file "$body"
+            # Wakes the Queen only now, so she reads the advice (or its absence)
+            # before deciding. She no longer listens to `blocked` itself.
+            gh issue edit "$ISSUE" --add-label oracle-advised
           fi
       - name: record execution
         if: always() && steps.guard.outcome == 'success' && steps.guard.outputs.skip != 'true'

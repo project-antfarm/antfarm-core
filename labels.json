@@ -58,5 +58,10 @@
     "name": "done-rejected",
     "color": "6F42C1",
     "description": "the Oracle rejected a DONE claim; the Queen continues"
+  },
+  {
+    "name": "oracle-advised",
+    "color": "6F42C1",
+    "description": "the Oracle commented on a blocked Issue; wakes the Queen"
   }
 ]
